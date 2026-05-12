@@ -122,6 +122,10 @@ def apply_format_widgets(format_name, kwargs):
     return video_format
 
 def tensor_to_int(tensor, bits):
+    # BFloat16 is not supported by NumPy, convert to float32 if needed
+    # (SeedVR2 already converts to Float16, so this path should rarely be taken)
+    if tensor.dtype == torch.bfloat16:
+        tensor = tensor.float()  # Convert BFloat16 to Float32
     tensor = tensor.cpu().numpy() * (2**bits-1) + 0.5
     return np.clip(tensor, 0, (2**bits-1))
 def tensor_to_shorts(tensor):
@@ -136,28 +140,19 @@ def ffmpeg_process(args, video_format, video_metadata, file_path, env):
     total_frames_output = 0
     if video_format.get('save_metadata', 'False') != 'False':
         os.makedirs(folder_paths.get_temp_directory(), exist_ok=True)
+        metadata = json.dumps(video_metadata)
         metadata_path = os.path.join(folder_paths.get_temp_directory(), "metadata.txt")
         #metadata from file should  escape = ; # \ and newline
-        def escape_ffmpeg_metadata(key, value):
-            value = str(value)
-            value = value.replace("\\","\\\\")
-            value = value.replace(";","\\;")
-            value = value.replace("#","\\#")
-            value = value.replace("=","\\=")
-            value = value.replace("\n","\\\n")
-            return f"{key}={value}"
-
+        metadata = metadata.replace("\\","\\\\")
+        metadata = metadata.replace(";","\\;")
+        metadata = metadata.replace("#","\\#")
+        metadata = metadata.replace("=","\\=")
+        metadata = metadata.replace("\n","\\\n")
+        metadata = "comment=" + metadata
         with open(metadata_path, "w") as f:
             f.write(";FFMETADATA1\n")
-            if "prompt" in video_metadata:
-                f.write(escape_ffmpeg_metadata("prompt", json.dumps(video_metadata["prompt"])) + "\n")
-            if "workflow" in video_metadata:
-                f.write(escape_ffmpeg_metadata("workflow", json.dumps(video_metadata["workflow"])) + "\n")
-            for k, v in video_metadata.items():
-                if k not in ["prompt", "workflow"]:
-                    f.write(escape_ffmpeg_metadata(k, json.dumps(v)) + "\n")
-
-        m_args = args[:1] + ["-i", metadata_path] + args[1:] + ["-metadata", "creation_time=now", "-movflags", "use_metadata_tags"]
+            f.write(metadata)
+        m_args = args[:1] + ["-i", metadata_path] + args[1:] + ["-metadata", "creation_time=now"]
         with subprocess.Popen(m_args + [file_path], stderr=subprocess.PIPE,
                               stdin=subprocess.PIPE, env=env) as proc:
             try:
@@ -568,14 +563,26 @@ class VideoCombine:
             output_files.append(file_path)
 
 
+            # Normalize audio input: support dict, LazyAudioMap (__getitem__), or object with .waveform/.sample_rate
             a_waveform = None
+            a_sample_rate = None
             if audio is not None:
                 try:
-                    #safely check if audio produced by VHS_LoadVideo actually exists
-                    a_waveform = audio['waveform']
-                except:
-                    pass
-            if a_waveform is not None:
+                    w = audio.get('waveform', None) if isinstance(audio, dict) else None
+                    sr = audio.get('sample_rate', None) if isinstance(audio, dict) else None
+                    if w is None or sr is None:
+                        try:
+                            w = audio['waveform']
+                            sr = audio['sample_rate']
+                        except (TypeError, KeyError, AttributeError):
+                            w = getattr(audio, 'waveform', None)
+                            sr = getattr(audio, 'sample_rate', None)
+                    if w is not None and sr is not None and isinstance(w, torch.Tensor) and w.numel() > 0:
+                        a_waveform = w
+                        a_sample_rate = int(sr) if not isinstance(sr, int) else sr
+                except Exception as e:
+                    logger.warn("VHS Video Combine: could not read audio input: %s", e)
+            if a_waveform is not None and a_sample_rate is not None:
                 # Create audio file if input was provided
                 output_file_with_audio = f"{filename}_{counter:05}-audio.{video_format['extension']}"
                 output_file_with_audio_path = os.path.join(full_output_folder, output_file_with_audio)
@@ -584,23 +591,24 @@ class VideoCombine:
                     video_format["audio_pass"] = ["-c:a", "libopus"]
 
 
-                # FFmpeg command with audio re-encoding
-                #TODO: expose audio quality options if format widgets makes it in
-                #Reconsider forcing apad/shortest
-                channels = audio['waveform'].size(1)
+                # FFmpeg expects (samples, channels) interleaved; waveform is (1, channels, samples) or (channels, samples)
+                w = a_waveform
+                if w.dim() == 3:
+                    w = w.squeeze(0)
+                # w is (channels, samples) -> (samples, channels) for ffmpeg -f f32le
+                channels = w.size(0)
                 min_audio_dur = total_frames_output / frame_rate + 1
                 if video_format.get('trim_to_audio', 'False') != 'False':
                     apad = []
                 else:
                     apad = ["-af", "apad=whole_dur="+str(min_audio_dur)]
                 mux_args = [ffmpeg_path, "-v", "error", "-n", "-i", file_path,
-                            "-ar", str(audio['sample_rate']), "-ac", str(channels),
+                            "-ar", str(a_sample_rate), "-ac", str(channels),
                             "-f", "f32le", "-i", "-", "-c:v", "copy"] \
                             + video_format["audio_pass"] \
                             + apad + ["-shortest", output_file_with_audio_path]
 
-                audio_data = audio['waveform'].squeeze(0).transpose(0,1) \
-                        .numpy().tobytes()
+                audio_data = w.transpose(0, 1).contiguous().numpy().tobytes()
                 merge_filter_args(mux_args, '-af')
                 try:
                     res = subprocess.run(mux_args, input=audio_data,
@@ -698,7 +706,7 @@ class LoadAudioUpload:
         audio_file = folder_paths.get_annotated_filepath(strip_path(kwargs['audio']))
         if audio_file is None or validate_path(audio_file) != True:
             raise Exception("audio_file is not a valid path: " + audio_file)
-
+        
         audio = get_audio(audio_file, start_time, duration)
         loaded_duration = audio['waveform'].size(2)/audio['sample_rate']
         return (audio, loaded_duration)
@@ -904,7 +912,7 @@ class VideoInfo:
 
     def get_video_info(self, video_info):
         keys = ["fps", "frame_count", "duration", "width", "height"]
-
+        
         source_info = []
         loaded_info = []
 
@@ -938,7 +946,7 @@ class VideoInfoSource:
 
     def get_video_info(self, video_info):
         keys = ["fps", "frame_count", "duration", "width", "height"]
-
+        
         source_info = []
 
         for key in keys:
@@ -970,7 +978,7 @@ class VideoInfoLoaded:
 
     def get_video_info(self, video_info):
         keys = ["fps", "frame_count", "duration", "width", "height"]
-
+        
         loaded_info = []
 
         for key in keys:

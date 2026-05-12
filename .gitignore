@@ -160,3 +160,6 @@ cython_debug/
 #.idea/
 # VIM swap files
 *.swp
+
+# Local fix documentation (optional reference, not for repo)
+AUDIO_FIX_DOCUMENTATION.md

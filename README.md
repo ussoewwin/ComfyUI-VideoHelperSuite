@@ -2,8 +2,11 @@
 
 ## Documentation
 
-**For all node descriptions, I/O options, latent/image utilities, video previews, advanced previews, and custom video format authoring, use the upstream project README as the single source of truth.** Do not treat this fork’s README as canonical for those topics; details may drift from upstream.
+Node descriptions, I/O, previews, and video formats are documented in the upstream README. Use that as the source of truth.
 
-- **Official repository (README on GitHub):** [Kosinkadink/ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite#readme)
-- **README (raw):** https://raw.githubusercontent.com/Kosinkadink/ComfyUI-VideoHelperSuite/main/README.md
-- **This fork — changelog (v1.0 / v1.1):** [md/CHANGELOG.md](md/CHANGELOG.md)
+- Upstream README: https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite#readme  
+- Upstream README (raw): https://raw.githubusercontent.com/Kosinkadink/ComfyUI-VideoHelperSuite/main/README.md  
+
+Changelog for **this fork** (releases v1.0, v1.1, etc.):
+
+- https://github.com/ussoewwin/ComfyUI-VideoHelperSuite/blob/main/md/CHANGELOG.md

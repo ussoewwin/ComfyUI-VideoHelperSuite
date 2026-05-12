@@ -6,3 +6,4 @@
 
 - **Official repository (README on GitHub):** [Kosinkadink/ComfyUI-VideoHelperSuite](https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite#readme)
 - **README (raw):** https://raw.githubusercontent.com/Kosinkadink/ComfyUI-VideoHelperSuite/main/README.md
+- **This fork — changelog (v1.0 / v1.1):** [md/CHANGELOG.md](md/CHANGELOG.md)

@@ -385,6 +385,7 @@ have **no line-level diff**; only the executable bit was normalized (common on W
 |--------------|------|
 | `a6879b8` | `upstream/main` tip at time of fork realignment |
 | `fed6f11` | Fork `main` tip (squashed fork patch, English subject line) |
+| `4d907be` | `upstream/main` latest tip merged into fork |
 
 ---
 
